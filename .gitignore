@@ -1,0 +1,8 @@
+# build 产物
+build/
+
+# Xcode 用户状态
+xcuserdata/
+
+# 系统文件
+.DS_Store
