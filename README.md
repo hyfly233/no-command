@@ -4,14 +4,15 @@
 
 ## 功能
 
-- **预设拦截**：⌘Q（退出应用）、⌘W（关闭窗口）、⌃⌘Q（锁屏）、⌃⌘W（关闭全部窗口）
-- **自定义组合录制**：设置窗口点「录制新组合」，按任意组合键即生成拦截规则
-- **App 白名单**：白名单内的前台应用不拦截（按 bundle id 匹配）
+- **预设拦截**：⌘Q（退出应用）、⌘W（关闭窗口）、⌃⌘Q（锁屏）、⌃⌘W（关闭全部窗口），每个可独立开关
+- **自定义组合录制**：设置窗口点「录制新组合」，按任意组合键即生成拦截规则，Esc 取消
+- **App 白名单**：白名单内的前台应用不拦截（按 bundle id 匹配）；显示名随条目持久化，应用退出后仍显示名字
+- **自身也受保护**：no-command 自己同样拦截 ⌘Q/⌃⌘Q/⌃⌘W（退出走菜单按钮），仅 ⌘W 放行（正常关闭设置窗口）
 - **总开关**：一键全部放行（紧急逃生口）
-- **拦截日志**：系统日志（`log stream`）+ 设置窗口内实时查看
-- **提示音**：可选，拦截时播放系统提示音
+- **拦截日志**：系统日志（`log stream`）+ 设置窗口内实时查看；同一组合 1 秒内限流一次
+- **提示音**：可选，拦截时播放系统提示音（与日志同步限流）
 
-## 构建与运行
+## 构建、运行与打包
 
 ```bash
 # 构建（Debug）
@@ -19,13 +20,35 @@ xcodebuild -project no-command.xcodeproj -scheme no-command -configuration Debug
 
 # 运行
 open build/Build/Products/Debug/no-command.app
+
+# 打包 Release：生成 dist/no-command-<版本>.zip 与 .dmg（含签名校验、Info.plist 校验）
+./scripts/package.sh
 ```
+
+### 安装（本机使用）
+
+```bash
+# dmg 双击拖入 Applications，或命令行直接拷贝 Release 构建
+cp -R build/Build/Products/Release/no-command.app /Applications/
+```
+
+> 辅助功能授权绑定 bundle id + 签名身份：Debug / Release 均用同一团队证书（`8MFNJGDG8Z`）签名，装到 /Applications 后**无需重新授权**。
+
+### 对外分发（发给别人）
+
+本机构建的 App 未公证，外部机器的 Gatekeeper 会拦截（「无法验证开发者」）。需要 Developer ID 签名 + 公证（付费开发者账号），`scripts/package.sh` 头部注释有完整命令：
+
+1. 签名：`codesign --options runtime --timestamp --deep -s "Developer ID Application: <名字>" no-command.app`
+2. 公证：`xcrun notarytool submit <zip> --apple-id <Apple ID> --password <app专用密码> --team-id <团队ID>`
+3. 装订：`xcrun stapler staple no-command.app`，再重新打包 dmg
+
+没有付费账号时，对方需右键 → 打开，或 `xattr -dr com.apple.quarantine /Applications/no-command.app`。
 
 ## 首次使用：授权辅助功能
 
 会话级事件 tap 需要「辅助功能」权限（不是「输入监控」）：
 
-1. 启动 App，点击菜单栏 ⌨️ 图标
+1. 启动 App，点击菜单栏 ⌘ 图标
 2. 菜单中显示「需要辅助功能授权」→ 点击「打开系统设置…」
 3. 系统设置 → 隐私与安全性 → 辅助功能 → 勾选 **no-command**
 4. 回到 App 后状态自动变为「辅助功能已授权」（应用激活时自动检测）
@@ -58,11 +81,14 @@ log stream --predicate 'subsystem == "com.hyfly.no-command"'
 | `⌃⌘Q` 锁屏可能无法拦截 | 属系统安全快捷键，事件可能被 WindowServer/安全层提前处理，普通用户态 App 无法保证拦截。若无效，可改用系统设置修改该快捷键，或使用 Karabiner-Elements |
 | 安全输入模式无法拦截 | 密码框、sudo 等安全输入（Secure Input）下的按键不进入事件 tap（防键盘记录设计），`⌘Q` 等在该场景不可拦截 |
 | 必须关闭沙箱 | App Sandbox 会阻止会话级事件 tap 与辅助功能授权；本工程已关闭 |
-| 需要辅助功能权限 | 未授权时拦截不生效，App 菜单与设置窗口会提示引导授权 |
+| 需要辅助功能权限 | 未授权时拦截不生效（此时 ⌘Q 会正常退 App，属预期），App 菜单与设置窗口会提示引导授权 |
 
 ## 技术要点
 
 - 拦截：`CGEventTap`（`.cgSessionEventTap` + `.headInsertEventTap` + keyDown），命中规则返回 `nil` 丢弃事件
-- 键位：keyCode 为物理键位（Q=12、W=13），不受键盘布局/输入法影响
+- 键位：keyCode 为物理键位（Q=12、W=13），显示名用显式映射表（经 Carbon `kVK_ANSI_*` 常量逐项校验），不受键盘布局/输入法影响
 - 自恢复：tap 被系统自动禁用（`.tapDisabledByTimeout` / `.tapDisabledByUserInput`）时自动重新启用
 - 并发：工程默认 MainActor 隔离，C 回调通过 `userInfo` 传 self + `MainActor.assumeIsolated` 切回主线程
+- 设置窗口：`Window` 场景 + `openWindow(id:)`（不用 Settings 场景/SettingsLink——MenuBarExtra 下有打不开的已知缺陷）；打开时 `NSApp.activate` + `makeKeyAndOrderFront`/`orderFrontRegardless` 置顶
+- 防刷屏：同一组合 1 秒内只记一次日志、响一次提示音（长按组合键的自动重复事件不会刷屏）
+- 白名单：`WhitelistEntry`（bundle id + 显示名）持久化，应用未运行时名字不丢失；自身 bundle id 禁止加入，防止绕过自身保护
