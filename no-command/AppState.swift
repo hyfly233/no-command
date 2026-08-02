@@ -18,7 +18,7 @@ import Foundation
 final class AppState: ObservableObject {
 
     static let shared = AppState()
-    /// 自身 bundle id：前台是自身时恒放行（否则 no-command 无法退出/设置窗口无法关闭）
+    /// 自身 bundle id：前台是自身时仅 ⌘W 放行（可关设置窗口），⌘Q/⌃⌘Q/⌃⌘W 照常拦截；退出走菜单按钮
     static let selfBundleID = Bundle.main.bundleIdentifier ?? "com.hyfly.no-command"
 
     // MARK: - 预设规则（固定定义；启用状态持久化在 enabledPresetIDs）
@@ -62,9 +62,9 @@ final class AppState: ObservableObject {
     @Published var customRules: [ShortcutRule] {
         didSet { saveJSON(customRules, key: "customRules") }
     }
-    /// 白名单 bundle id 集合
-    @Published var whitelist: Set<String> {
-        didSet { UserDefaults.standard.set(Array(whitelist), forKey: "whitelist") }
+    /// 白名单条目（bundle id + 持久化显示名）
+    @Published var whitelistEntries: [WhitelistEntry] {
+        didSet { saveJSON(whitelistEntries, key: "whitelistEntries") }
     }
 
     // MARK: - 运行时状态
@@ -93,7 +93,17 @@ final class AppState: ObservableObject {
         } else {
             customRules = []
         }
-        whitelist = Set(defaults.stringArray(forKey: "whitelist") ?? [])
+        // 白名单：优先读新版（带显示名的条目）；兼容旧版（纯 bundle id 数组）迁移，
+        // 旧条目的显示名在应用运行时会被 refreshRunningApps 自动补全
+        if let data = defaults.data(forKey: "whitelistEntries"),
+           let entries = try? JSONDecoder().decode([WhitelistEntry].self, from: data) {
+            whitelistEntries = entries
+        } else if let old = defaults.stringArray(forKey: "whitelist") {
+            whitelistEntries = old.map { WhitelistEntry(bundleID: $0, name: $0) }
+            defaults.removeObject(forKey: "whitelist")
+        } else {
+            whitelistEntries = []
+        }
     }
 
     // MARK: - 查询与操作
@@ -112,15 +122,23 @@ final class AppState: ObservableObject {
     /// 白名单判定（前台 app bundle id）
     func isWhitelisted(_ bundleID: String?) -> Bool {
         guard let bundleID else { return false }
-        return whitelist.contains(bundleID)
+        return whitelistEntries.contains { $0.bundleID == bundleID }
     }
 
-    func addToWhitelist(_ bundleID: String) {
-        whitelist.insert(bundleID)
+    /// 加入白名单（记录显示名，应用退出后仍显示名字）。
+    /// 自身 bundle id 禁止加入：若自身在白名单中，前台是自身时会因白名单而全部放行，
+    /// 导致 ⌘Q 关掉设置窗口/退掉 App 的问题再次出现（自身只应放行 ⌘W，见 KeyboardInterceptor）。
+    func addToWhitelist(bundleID: String, name: String) {
+        guard bundleID != AppState.selfBundleID else { return }
+        if let idx = whitelistEntries.firstIndex(where: { $0.bundleID == bundleID }) {
+            whitelistEntries[idx].name = name // 已有则更新显示名
+        } else {
+            whitelistEntries.append(WhitelistEntry(bundleID: bundleID, name: name))
+        }
     }
 
     func removeFromWhitelist(_ bundleID: String) {
-        whitelist.remove(bundleID)
+        whitelistEntries.removeAll { $0.bundleID == bundleID }
     }
 
     /// 上一次记录的授权状态（仅状态变化时记日志，避免刷屏）
@@ -144,7 +162,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// 刷新运行中应用列表（供白名单选择）
+    /// 刷新运行中应用列表（供白名单选择），并顺手补全白名单条目的持久化显示名
     func refreshRunningApps() {
         let apps = NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular } // 只列常规前台应用，过滤菜单栏/后台代理
@@ -153,11 +171,15 @@ final class AppState: ObservableObject {
                 return RunningApp(bundleID: id, name: app.localizedName ?? id)
             }
         runningApps = apps.sorted { $0.name < $1.name }
-    }
 
-    /// 白名单 bundle id → 显示名（应用未运行时回退原始 id）
-    func whitelistDisplay(_ bundleID: String) -> String {
-        runningApps.first(where: { $0.bundleID == bundleID })?.name ?? bundleID
+        // 运行中的应用在名单内时，刷新持久化显示名（didSet 自动保存）；
+        // 兼容旧数据迁移（name == bundleID）与手动输入的条目
+        for app in runningApps {
+            if let idx = whitelistEntries.firstIndex(where: { $0.bundleID == app.bundleID }),
+               whitelistEntries[idx].name != app.name {
+                whitelistEntries[idx].name = app.name
+            }
+        }
     }
 
     // MARK: - 自定义组合录制

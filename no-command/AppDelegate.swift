@@ -20,7 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        // 从系统设置授权回来、或菜单被打开时，刷新权限并自动拉起拦截
+        // 应用被激活（点开设置窗口、从系统设置授权回来等）时：
+        // ① 刷新辅助功能权限并自动拉起拦截；② 刷新运行中应用列表，
+        // 避免白名单页签因 TabView 视图缓存而显示陈旧的应用列表
         AppState.shared.refreshPermission()
+        AppState.shared.refreshRunningApps()
     }
 }

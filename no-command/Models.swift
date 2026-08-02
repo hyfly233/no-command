@@ -154,3 +154,11 @@ struct RunningApp: Identifiable {
     let bundleID: String
     let name: String
 }
+
+/// 白名单条目：bundle id + 显示名。
+/// 显示名随条目持久化——应用未运行时也能显示名字，而不是回退成 bundle id。
+struct WhitelistEntry: Identifiable, Codable, Equatable {
+    var id: String { bundleID }
+    let bundleID: String
+    var name: String
+}

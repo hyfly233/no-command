@@ -29,7 +29,7 @@ private struct ShortcutTab: View {
     @ObservedObject private var state = AppState.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             Toggle("总开关：启用快捷键拦截", isOn: $state.masterEnabled)
                 .font(.headline)
 
@@ -107,7 +107,7 @@ private struct ShortcutTab: View {
 
             Toggle("拦截时播放提示音", isOn: $state.beepOnBlock)
         }
-        .padding(16)
+        .padding(12)
     }
 }
 
@@ -119,7 +119,7 @@ private struct WhitelistTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("白名单内的 App 不会被拦截（⌘Q 等组合正常生效）。no-command 自身始终放行。")
+            Text("白名单内的 App 不会被拦截（⌘Q 等组合正常生效）。no-command 自身：⌘W 正常关闭设置窗口，⌘Q/⌃⌘Q/⌃⌘W 同样受保护。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -129,9 +129,13 @@ private struct WhitelistTab: View {
                         Text(app.name)
                         Spacer()
                         Toggle("", isOn: Binding(
-                            get: { state.whitelist.contains(app.bundleID) },
+                            get: { state.isWhitelisted(app.bundleID) },
                             set: { on in
-                                on ? state.addToWhitelist(app.bundleID) : state.removeFromWhitelist(app.bundleID)
+                                if on {
+                                    state.addToWhitelist(bundleID: app.bundleID, name: app.name)
+                                } else {
+                                    state.removeFromWhitelist(app.bundleID)
+                                }
                             }
                         ))
                         .labelsHidden()
@@ -141,18 +145,23 @@ private struct WhitelistTab: View {
             }
 
             GroupBox("已加入白名单") {
-                if state.whitelist.isEmpty {
-                    Text("（空）").foregroundStyle(.secondary).padding(4)
-                } else {
-                    ForEach(Array(state.whitelist).sorted(), id: \.self) { id in
-                        HStack {
-                            Text(state.whitelistDisplay(id))
-                            Spacer()
-                            Button("移除") { state.removeFromWhitelist(id) }
+                // List 常驻：空时框内显示（空），有条目时内部滚动，框架高度稳定
+                List {
+                    if state.whitelistEntries.isEmpty {
+                        Text("（空）").foregroundStyle(.secondary).padding(4)
+                    } else {
+                        ForEach(state.whitelistEntries.sorted { $0.name < $1.name }) { entry in
+                            HStack {
+                                Text(entry.name)
+                                Text(entry.bundleID).font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Button("移除") { state.removeFromWhitelist(entry.bundleID) }
+                            }
+                            .padding(.vertical, 1)
                         }
-                        .padding(.vertical, 1)
                     }
                 }
+                .frame(maxHeight: .infinity)
             }
 
             HStack {
@@ -161,7 +170,7 @@ private struct WhitelistTab: View {
                 Button("添加") {
                     let id = manualBundleID.trimmingCharacters(in: .whitespaces)
                     guard !id.isEmpty else { return }
-                    state.addToWhitelist(id)
+                    state.addToWhitelist(bundleID: id, name: id) // 手动输入没有应用名，显示名先用 bundle id（运行时自动补全）
                     manualBundleID = ""
                 }
             }

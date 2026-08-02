@@ -68,6 +68,8 @@ final class KeyboardInterceptor {
         eventTap = tap
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         runLoopSource = source
+        // .commonModes：菜单追踪、窗口拖拽等场景 RunLoop 会切换 mode，
+        // 用 commonModes 保证菜单打开期间 tap 依然接收事件
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         LogStore.shared.add("键盘拦截已启动")
@@ -125,16 +127,24 @@ final class KeyboardInterceptor {
 
         guard state.masterEnabled else { return false }
 
-        // 自身 / 白名单内的前台 App 恒放行
+        // 白名单内的前台 App：恒放行
         let front = NSWorkspace.shared.frontmostApplication
         let frontID = front?.bundleIdentifier
-        if frontID == AppState.selfBundleID || state.isWhitelisted(frontID) {
+        if state.isWhitelisted(frontID) {
             return false
         }
 
         guard let rule = state.matchRule(keyCode: keyCode, flags: flags) else { return false }
 
-        // 防日志刷屏：同一组合 1 秒内只记录一次（拦截行为不受影响）
+        // 自身 App：仅 ⌘W 放行（可正常关闭设置窗口），⌘Q/⌃⌘Q/⌃⌘W 照常拦截，
+        // 防止按 ⌘Q 时把自身设置窗口关掉 / 把 App 退掉（退出请用菜单按钮）
+        if frontID == AppState.selfBundleID,
+           rule.keyCode == 13, !rule.requiresControl, !rule.requiresOption, !rule.requiresShift {
+            return false
+        }
+
+        // 防刷屏：同一组合 1 秒内只记一次日志、响一次提示音（拦截行为不受影响）。
+        // 按住组合键时系统会重复派发 keyDown，若不限流，长按 ⌘Q 会连响连记，体验很差。
         let now = Date().timeIntervalSince1970
         if keyCode != lastBlockedKey || flags != lastBlockedFlags || now - lastBlockedTime > 1.0 {
             lastBlockedKey = keyCode
@@ -142,10 +152,9 @@ final class KeyboardInterceptor {
             lastBlockedTime = now
             let appName = front?.localizedName ?? "未知应用"
             LogStore.shared.add("拦截 \(rule.display)（前台 \(appName)）")
-        }
-
-        if state.beepOnBlock {
-            NSSound.beep()
+            if state.beepOnBlock {
+                NSSound.beep()
+            }
         }
         return true
     }

@@ -27,7 +27,8 @@
 | 前台 App 按 `⌘W` | 丢弃事件，窗口不关闭；记录日志 |
 | 前台 App 按 `⌃⌘Q` | 尽力拦截锁屏（⚠️ 系统安全层可能抢先处理，见 §5） |
 | 前台 App 按 `⌃⌘W` | 丢弃事件，拦截"关闭所有窗口"类操作 |
-| 前台 App 在白名单内 / 就是 no-command 自身 | 放行，不拦截 |
+| 前台 App 在白名单内 | 放行，不拦截 |
+| 前台 App 是 no-command 自身 | 仅 ⌘W 放行（可关设置窗口），⌘Q/⌃⌘Q/⌃⌘W 照常拦截 |
 | 总开关关闭 | 全部放行（紧急逃生口） |
 
 ## 3. 技术方案
@@ -63,7 +64,7 @@
 | L4 | 事件 tap 回调是 C 函数（nonisolated），而工程默认 MainActor 隔离 | 用 `userInfo` 传 self（`Unmanaged.passUnretained`），回调内 `MainActor.assumeIsolated` 切回主线程再处理（回调本身跑在主 RunLoop 上，安全） |
 | L5 | tap 可能因超时/权限变化被系统自动禁用（收到 `.tapDisabledByTimeout` / `.tapDisabledByUserInput`） | 回调中检测到即重新 `CGEvent.tapEnable` |
 | L6 | 若用 ad-hoc 签名（`-s -`），每次重编译签名身份变化 → TCC 授权失效，需重新授权 | 本工程用开发团队自动签名，身份稳定，不踩此坑 |
-| L7 | 菜单栏 App 自身被激活时（点菜单）不应拦截自己的 `⌘Q` | 前台是自身 bundle id 时恒放行；另提供菜单「退出 no-command」入口 |
+| L7 | 菜单栏 App 自身被激活时（点菜单）按 `⌘Q` 不应退掉自己 | 前台是自身时仅 ⌘W 放行，⌘Q/⌃⌘Q/⌃⌘W 照常拦截；退出走菜单按钮 |
 
 ## 6. 功能清单（优先级）
 
@@ -124,7 +125,7 @@ open build/Build/Products/Debug/no-command.app
 #    - 按 ⌃⌘W → 不触发关闭全部窗口
 #    - 关闭总开关 → ⌘Q 恢复正常退出
 #    - 将 Chrome 加入白名单 → Chrome 前台时 ⌘Q 正常退出
-#    - 在 no-command 菜单打开状态按 ⌘Q → no-command 正常退出（自身放行）
+#    - 设置窗口前台按 ⌘Q → 被拦截，设置窗口不关闭、App 不退出（⌘W 可关窗口）
 # 5. 日志订阅
 log stream --predicate 'subsystem == "com.hyfly.no-command"'
 ```
