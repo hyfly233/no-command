@@ -43,6 +43,12 @@ final class AppState: ObservableObject {
                      requiresCommand: true, requiresControl: true,
                      requiresOption: false, requiresShift: false,
                      isEnabled: true, isPreset: true),
+        // ⌥⌘Q：部分 App 用它做「退出并恢复窗口」类操作，加入预设一并拦截
+        ShortcutRule(id: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!,
+                     name: "退出应用（⌥⌘Q）", keyCode: 12,
+                     requiresCommand: true, requiresControl: false,
+                     requiresOption: true, requiresShift: false,
+                     isEnabled: true, isPreset: true),
     ]
 
     // MARK: - 持久化配置
@@ -81,12 +87,21 @@ final class AppState: ObservableObject {
         let defaults = UserDefaults.standard
         masterEnabled = defaults.object(forKey: "masterEnabled") as? Bool ?? true
         beepOnBlock = defaults.object(forKey: "beepOnBlock") as? Bool ?? false
+        // 预设启用集合：用局部变量计算后再一次性赋值（init 中在全部存储属性初始化前读写 self 会被编译器拒绝）
+        var enabled: Set<UUID>
         // 区分「从未保存」（默认全开）与「用户全部关掉」（空数组），避免误重置
         if let savedIDs = defaults.stringArray(forKey: "enabledPresetIDs") {
-            enabledPresetIDs = Set(savedIDs.compactMap { UUID(uuidString: $0) })
+            enabled = Set(savedIDs.compactMap { UUID(uuidString: $0) })
         } else {
-            enabledPresetIDs = Set(presets.map(\.id))
+            enabled = Set(presets.map(\.id))
         }
+        // 升级兼容：新版本新增的预设规则（如 ⌥⌘Q）首次出现时默认启用，
+        // 之后以用户手动开关为准（knownPresetIDs 记录已见过的预设 id，只补一次）
+        let allPresetIDs = Set(presets.map(\.id))
+        let knownPresetIDs = Set((defaults.stringArray(forKey: "knownPresetIDs") ?? []).compactMap { UUID(uuidString: $0) })
+        enabled.formUnion(allPresetIDs.subtracting(knownPresetIDs))
+        defaults.set(allPresetIDs.map(\.uuidString), forKey: "knownPresetIDs")
+        enabledPresetIDs = enabled
         if let data = defaults.data(forKey: "customRules"),
            let rules = try? JSONDecoder().decode([ShortcutRule].self, from: data) {
             customRules = rules
