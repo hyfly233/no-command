@@ -82,6 +82,11 @@ final class AppState: ObservableObject {
     @Published var recordingMessage = ""
     /// 运行中的应用（白名单勾选用）
     @Published var runningApps: [RunningApp] = []
+    /// 设置窗口当前页签（运行时状态，不持久化）：菜单可直接跳到白名单/日志
+    @Published var settingsTab: SettingsTab = .shortcuts
+    /// 事件 tap 是否真的已创建（运行时状态，不持久化）；
+    /// 与 permissionGranted 区分开：授权成功但 tap 创建失败时界面必须显示异常。
+    @Published var interceptorRunning = false
 
     private init() {
         let defaults = UserDefaults.standard
@@ -140,16 +145,32 @@ final class AppState: ObservableObject {
         return whitelistEntries.contains { $0.bundleID == bundleID }
     }
 
+    /// 界面用运行状态：把「总开关 / 授权 / tap 是否真的起来」合成一个状态，
+    /// 避免出现「显示已授权但实际没在拦截」的误导。
+    var interceptorState: InterceptorState {
+        guard masterEnabled else { return .paused }
+        guard permissionGranted else { return .unauthorized }
+        return interceptorRunning ? .running : .notReady
+    }
+
     /// 加入白名单（记录显示名，应用退出后仍显示名字）。
     /// 自身 bundle id 禁止加入：若自身在白名单中，前台是自身时会因白名单而全部放行，
     /// 导致 ⌘Q 关掉设置窗口/退掉 App 的问题再次出现（自身只应放行 ⌘W，见 KeyboardInterceptor）。
-    func addToWhitelist(bundleID: String, name: String) {
-        guard bundleID != AppState.selfBundleID else { return }
-        if let idx = whitelistEntries.firstIndex(where: { $0.bundleID == bundleID }) {
-            whitelistEntries[idx].name = name // 已有则更新显示名
-        } else {
-            whitelistEntries.append(WhitelistEntry(bundleID: bundleID, name: name))
+    /// 返回值用于界面反馈（静默 return 会让用户以为添加成功）。
+    @discardableResult
+    func addToWhitelist(bundleID: String, name: String) -> WhitelistAddResult {
+        let id = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        // bundle id 至少是 a.b 形式；带空格说明用户粘错了内容（例如整行命令）
+        guard id.contains("."), !id.contains(" ") else { return .invalid }
+        guard id != AppState.selfBundleID else { return .blockedSelf }
+        if let idx = whitelistEntries.firstIndex(where: { $0.bundleID == id }) {
+            if whitelistEntries[idx].name != name {
+                whitelistEntries[idx].name = name // 已有则更新显示名
+            }
+            return .exists
         }
+        whitelistEntries.append(WhitelistEntry(bundleID: id, name: name))
+        return .added
     }
 
     func removeFromWhitelist(_ bundleID: String) {
@@ -159,13 +180,15 @@ final class AppState: ObservableObject {
     /// 上一次记录的授权状态（仅状态变化时记日志，避免刷屏）
     private var lastLoggedGranted: Bool?
 
-    /// 刷新权限状态；权限就绪且拦截器未启动时自动拉起
+    /// 刷新权限状态；权限就绪且拦截器未启动时自动拉起。
+    /// 每次都同步 interceptorRunning，让界面能区分「未授权」与「已授权但 tap 没起来」。
     func refreshPermission() {
         let granted = PermissionManager.isTrusted
         permissionGranted = granted
         if granted {
             KeyboardInterceptor.shared.start()
         }
+        interceptorRunning = KeyboardInterceptor.shared.isRunning
         // 状态变化时记一条日志，保证启动/授权链路可观测（log stream 可见）
         if lastLoggedGranted != granted {
             lastLoggedGranted = granted

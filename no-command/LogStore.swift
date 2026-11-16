@@ -19,7 +19,8 @@ final class LogStore: ObservableObject {
     private let logger = Logger(subsystem: "com.hyfly.no-command", category: "interceptor")
     /// 内存环形缓冲上限：仅用于菜单/设置窗口展示最近事件，有界即可，
     /// 防止拦截量大时（如长按 ⌘Q 的重复事件）内存无限增长；完整审计走系统日志（log stream）
-    private let capacity = 200
+    /// 内存环形缓冲上限（界面显示与清理按钮共用同一常量）
+    static let capacity = 200
 
     @Published private(set) var entries: [LogEntry] = []
 
@@ -29,8 +30,8 @@ final class LogStore: ObservableObject {
     func add(_ message: String) {
         let entry = LogEntry(time: Date(), message: message)
         entries.append(entry)
-        if entries.count > capacity {
-            entries.removeFirst(entries.count - capacity)
+        if entries.count > LogStore.capacity {
+            entries.removeFirst(entries.count - LogStore.capacity)
         }
         // privacy: .public 允许 log show / log stream 读取
         logger.info("\(message, privacy: .public)")
